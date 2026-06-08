@@ -34,10 +34,12 @@ Es mangelt an einer automatisierten Brücke zwischen dem akademischen Informatio
 
 Das Projekt folgt dem **Design Science Research (DSR)**-Ansatz, der auf die systematische Entwicklung und Evaluation von IT-Artefakten zur Lösung praxisrelevanter Probleme ausgerichtet ist.
 
+Als technische Umsetzungsplattform wird **N8N** eingesetzt – eine Open-Source-Low-Code-Automatisierungsplattform, die visuelle Workflow-Orchestrierung mit vollständiger programmatischer Erweiterbarkeit verbindet. Diese Wahl ermöglicht eine schnelle Prototypenentwicklung bei gleichzeitiger Anpassungsfähigkeit der Geschäftslogik.
+
 Der Prozess verläuft iterativ in drei Hauptphasen:
 
-1. **Anforderungsanalyse**: Erhebung und Formalisierung von Extraktionsregeln auf Basis realer Lehrveranstaltungsdokumente aus verschiedenen Lehrstühlen.
-2. **Prototypenentwicklung**: Aufbau eines Low-Code-Prototypen, der die definierten Regeln implementiert und die Kernkomponenten des Agenten integriert.
+1. **Anforderungsanalyse**: Erhebung und Formalisierung von Extraktionsregeln auf Basis realer Lehrveranstaltungsdokumente aus verschiedenen Lehrstühlen. Die Regeln werden direkt als N8N-Workflow-Logik modelliert.
+2. **Prototypenentwicklung**: Aufbau des N8N-Workflows mit den Kernknoten Form Trigger, Extract From File, OpenAI Chat, Code-Node und Google Calendar. Der Workflow ist als importierbare JSON-Datei (`n8n-workflow.json`) im Repository verfügbar.
 3. **Nutzertestphase**: Validierung der Ergebnisse durch empirische Tests mit Studierenden im realen Semesterbetrieb, mit anschließender iterativer Verbesserung des Artefakts.
 
 Die Wahl des DSR-Rahmens ist begründet durch den praxisorientierten Charakter der Problemstellung und die Notwendigkeit, das Artefakt sowohl technisch als auch nutzerzentriert zu evaluieren.
@@ -48,21 +50,37 @@ Die Wahl des DSR-Rahmens ist begründet durch den praxisorientierten Charakter d
 
 ### Artefakttyp
 
-Das entwickelte Artefakt ist ein **Software-Artefakt** in Form eines KI-Prozess-Agenten.
+Das entwickelte Artefakt ist ein **Software-Artefakt** in Form eines KI-Prozess-Agenten, realisiert als N8N-Workflow (`n8n-workflow.json`).
 
 ### Struktur
 
-Der Agent besteht aus drei funktional getrennten Modulen:
+Der N8N-Workflow besteht aus sieben Knoten, die drei funktionale Schichten abbilden:
 
-1. **Parsing-Modul**: Übernimmt die Texterkennung und -vorverarbeitung. Es liest Eingabedokumente (PDF, DOCX, Plaintext) ein und bereitet den Rohtext für die weitere Verarbeitung auf.
+**Schicht 1 – Parsing (Texterkennung)**
 
-2. **Reasoning-Modul (LLM)**: Der Kern des Agenten. Ein Large Language Model identifiziert Termine und Fristen im aufbereiteten Text, löst relative und vage Zeitangaben in konkrete Datumswerte auf und berechnet sinnvolle Vorlaufzeiten für Erinnerungen.
+| N8N-Knoten | Funktion |
+|---|---|
+| `Form Trigger` | Nimmt das Dokument (PDF/DOCX/TXT) und den Semesterbeginn als Formular-Upload entgegen |
+| `Extract From File` | Extrahiert den Rohtext aus der hochgeladenen Datei |
 
-3. **API-Schnittstelle**: Synchronisiert die extrahierten, strukturierten Datenpunkte mit externen Kalender-Apps (z. B. Google Calendar API, CalDAV-kompatible Dienste).
+**Schicht 2 – Reasoning (LLM)**
+
+| N8N-Knoten | Funktion |
+|---|---|
+| `OpenAI` (GPT-4o) | Erhält den Rohtext und den Semesterbeginn, identifiziert alle Termine und gibt ein strukturiertes JSON-Array zurück (Felder: `titel`, `datum`, `typ`, `modul`, `mehrdeutig`, `hinweis`) |
+| `Code` | Parst die LLM-Antwort, bereinigt eventuelle Markdown-Wrapper und teilt das Array in einzelne N8N-Items auf |
+
+**Schicht 3 – Integration (API & Human-in-the-Loop)**
+
+| N8N-Knoten | Funktion |
+|---|---|
+| `IF` | Prüft das Feld `mehrdeutig`: eindeutige Termine gehen in den Kalender-Pfad, unklare in den Rückfrage-Pfad |
+| `Google Calendar` | Erstellt einen ganztägigen Kalender-Eintrag mit typ-basierter Farbcodierung (Prüfung = Rot, Abgabe = Orange, Präsentation = Grün) |
+| `Telegram` | Sendet bei mehrdeutigen Terminen eine formatierte Rückfrage-Nachricht an den Studierenden (Human-in-the-Loop) |
 
 ### Begründung
 
-Die Integration eines Large Language Model ist notwendig, um Kontextinformationen in natürlicher Sprache zu verstehen und in präzise, maschinenlesbare Datenpunkte zu übersetzen. Regelbasierte Systeme allein sind nicht in der Lage, die semantische Vielfalt akademischer Formulierungen zuverlässig zu verarbeiten.
+Die Integration von GPT-4o als zentrales Reasoning-Modul ist notwendig, um Kontextinformationen in natürlicher Sprache zu verstehen und in präzise, maschinenlesbare Datenpunkte zu übersetzen. Regelbasierte Systeme allein sind nicht in der Lage, die semantische Vielfalt akademischer Formulierungen zuverlässig zu verarbeiten. N8N ermöglicht dabei die nahtlose Orchestrierung aller drei Schichten ohne proprietäre Infrastruktur und ist vollständig self-hostbar.
 
 ---
 

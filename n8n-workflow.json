@@ -1,0 +1,257 @@
+{
+  "name": "Deadline- & Aufgabenmeister",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Deadline- & Aufgabenmeister\n### Workflow-Übersicht\n**1** Nutzer lädt Dokument (PDF/DOCX/TXT) über Formular hoch\n**2** N8N extrahiert den Rohtext aus der Datei\n**3** GPT-4o identifiziert alle Termine und gibt JSON zurück\n**4** Code-Node parst JSON → ein Item pro Termin\n**5** Eindeutige Termine → direkt in Google Calendar\n**6** Mehrdeutige Termine → Telegram-Rückfrage (Human-in-the-Loop)\n\n---\n**Benötigte Credentials:**\n- `OpenAI API` – API-Key\n- `Google Calendar OAuth2` – Account-Zugriff\n- `Telegram API` – Bot-Token\n- Variable `TELEGRAM_CHAT_ID` in N8N setzen",
+        "height": 260,
+        "width": 360,
+        "color": 4
+      },
+      "id": "sticky-note-1",
+      "name": "Workflow-Dokumentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [0, 60]
+    },
+    {
+      "parameters": {
+        "formTitle": "Deadline- & Aufgabenmeister",
+        "formDescription": "Lade ein Syllabus, Modulhandbuch oder einen Lehrveranstaltungsplan hoch. Der Agent extrahiert automatisch alle Termine und trägt sie in deinen Google-Kalender ein.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Lehrveranstaltungsdokument",
+              "fieldType": "file",
+              "requiredField": true,
+              "acceptFileTypes": ".pdf,.docx,.txt"
+            },
+            {
+              "fieldLabel": "Semesterbeginn",
+              "fieldType": "date",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Modulname (optional)",
+              "fieldType": "text",
+              "requiredField": false,
+              "placeholder": "z. B. Wirtschaftsinformatik I"
+            }
+          ]
+        },
+        "options": {
+          "respondWithOptions": {
+            "values": {
+              "respondWith": "text",
+              "responseText": "Dokument empfangen. Deine Termine werden jetzt extrahiert und in den Kalender eingetragen."
+            }
+          }
+        }
+      },
+      "id": "form-trigger-1",
+      "name": "Dokument hochladen",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [400, 300],
+      "webhookId": "deadline-master-upload"
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "options": {}
+      },
+      "id": "extract-file-1",
+      "name": "Text aus Dokument extrahieren",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o",
+          "mode": "list",
+          "cachedResultName": "gpt-4o"
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Du bist ein präziser Assistent zur Extraktion akademischer Termine aus Lehrveranstaltungsdokumenten.\n\nExtrahiere ALLE Termine, Fristen, Abgaben und Prüfungen aus dem übergebenen Text.\n\nGib das Ergebnis als JSON-Array zurück. Jedes Element hat folgende Felder:\n- \"titel\" (string): Kurztitel des Termins\n- \"datum\" (string|null): Konkretes Datum im Format YYYY-MM-DD; null wenn nicht eindeutig ableitbar\n- \"typ\" (string): \"Abgabe\" | \"Prüfung\" | \"Präsentation\" | \"Sonstiges\"\n- \"modul\" (string): Name der Lehrveranstaltung\n- \"beschreibung\" (string): Kurze Beschreibung des Termins\n- \"mehrdeutig\" (boolean): true wenn das Datum nicht zweifelsfrei aus dem Text ableitbar ist\n- \"hinweis\" (string|null): Begründung der Mehrdeutigkeit; null wenn mehrdeutig=false\n\nAntworte AUSSCHLIESSLICH mit dem JSON-Array. Kein erklärender Text."
+            },
+            {
+              "role": "user",
+              "content": "=Semesterbeginn: {{ $('Dokument hochladen').item.json['Semesterbeginn'] }}\nModul (falls angegeben): {{ $('Dokument hochladen').item.json['Modulname (optional)'] || 'nicht angegeben' }}\n\nDokumentinhalt:\n{{ $json.text }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.1
+        }
+      },
+      "id": "openai-extract-1",
+      "name": "Termine extrahieren (GPT-4o)",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.7,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.choices[0].message.content;\n\nlet termine;\ntry {\n  // Markdown-Code-Blöcke entfernen, falls vorhanden\n  const cleaned = raw\n    .replace(/^```json\\s*/im, '')\n    .replace(/^```\\s*/im, '')\n    .replace(/```\\s*$/im, '')\n    .trim();\n  termine = JSON.parse(cleaned);\n} catch (e) {\n  throw new Error(\n    `LLM-Antwort konnte nicht als JSON geparst werden: ${e.message}\\n` +\n    `Erste 400 Zeichen der Antwort: ${raw.slice(0, 400)}`\n  );\n}\n\nif (!Array.isArray(termine)) {\n  throw new Error(`Erwartet: JSON-Array. Tatsächlicher Typ: ${typeof termine}`);\n}\n\n// Jeder Termin wird zu einem separaten N8N-Item\nreturn termine.map(t => ({ json: t }));"
+      },
+      "id": "code-parse-1",
+      "name": "JSON parsen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-ambiguous",
+              "leftValue": "={{ $json.mehrdeutig }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-ambiguous-1",
+      "name": "Datum mehrdeutig?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1360, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $vars.TELEGRAM_CHAT_ID }}",
+        "text": "=⚠️ *Unklarer Termin – Bitte manuell prüfen*\n\n📚 *Modul:* {{ $json.modul }}\n🏷 *Typ:* {{ $json.typ }}\n📌 *Titel:* {{ $json.titel }}\n\n❓ *Problem:* {{ $json.hinweis }}\n\nBitte trage diesen Termin manuell in deinen Kalender ein.",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "telegram-notify-1",
+      "name": "Rückfrage via Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1600, 120]
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list",
+          "cachedResultName": "Primärer Kalender"
+        },
+        "start": "={{ $json.datum }}",
+        "end": "={{ $json.datum }}",
+        "additionalFields": {
+          "summary": "={{ '[' + $json.typ + '] ' + $json.titel }}",
+          "description": "={{ $json.beschreibung + '\\n\\nModul: ' + $json.modul + '\\n\\n---\\nAutomatisch extrahiert von Deadline- & Aufgabenmeister (N8N-Workflow).' }}",
+          "allday": true,
+          "colorId": "={{ {'Prüfung': '11', 'Abgabe': '6', 'Präsentation': '2'}[$json.typ] || '1' }}"
+        }
+      },
+      "id": "gcal-create-1",
+      "name": "Termin in Google Calendar eintragen",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [1600, 480]
+    }
+  ],
+  "connections": {
+    "Dokument hochladen": {
+      "main": [
+        [
+          {
+            "node": "Text aus Dokument extrahieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Text aus Dokument extrahieren": {
+      "main": [
+        [
+          {
+            "node": "Termine extrahieren (GPT-4o)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Termine extrahieren (GPT-4o)": {
+      "main": [
+        [
+          {
+            "node": "JSON parsen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JSON parsen": {
+      "main": [
+        [
+          {
+            "node": "Datum mehrdeutig?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Datum mehrdeutig?": {
+      "main": [
+        [
+          {
+            "node": "Rückfrage via Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Termin in Google Calendar eintragen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "id": "deadline-aufgabenmeister-v1",
+  "tags": [
+    { "id": "tag-1", "name": "Studium" },
+    { "id": "tag-2", "name": "KI-Agent" },
+    { "id": "tag-3", "name": "Automatisierung" }
+  ]
+}
